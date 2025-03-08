@@ -6,6 +6,8 @@ module suipht_token::suipht_token;
 // For Move coding conventions, see
 // https://docs.sui.io/concepts/sui-move-concepts/conventions
 
+// SPDX-License-Identifier: MIT
+// Author: Akwaubok Emeh
 
 module 0x1::suipht_token {
     use sui::tx_context::TxContext;
