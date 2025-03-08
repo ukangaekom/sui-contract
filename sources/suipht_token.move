@@ -79,4 +79,30 @@ module 0x1::suipht_token {
 
         // Add tokens and SUI to the pool
         balance::join(&mut pool.token_balance, tokens_to_add);
-       
+        coin::join(&mut pool.sui_balance, sui_to_add);
+    }
+
+    /// Removes liquidity (only owner can remove liquidity)
+    public fun remove_liquidity(
+        pool: &mut LiquidityPool,
+        token_amount: u64,
+        sui_amount: u64,
+        recipient: address,
+        ctx: &mut TxContext
+    ) {
+        // Only the pool owner can remove liquidity
+        assert!(tx_context::sender(ctx) == pool.owner, 6); // Error code 6 for unauthorized access
+
+        // Check that the pool has sufficient tokens and SUI
+        assert!(balance::value(&pool.token_balance) >= token_amount, 7); // Error code 7 for insufficient tokens
+        assert!(coin::value(&pool.sui_balance) >= sui_amount, 8); // Error code 8 for insufficient SUI
+
+        // Deduct tokens and SUI from the pool
+        let tokens_to_transfer = balance::split(&mut pool.token_balance, token_amount);
+        let sui_to_transfer = coin::split(&mut pool.sui_balance, sui_amount, ctx);
+
+        // Transfer tokens and SUI to the recipient
+        transfer::public_transfer(tokens_to_transfer, recipient);
+        transfer::public_transfer(sui_to_transfer, recipient);
+    }
+}
