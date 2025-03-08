@@ -1,30 +1,45 @@
-/*
-/// Module: suipht_token
-module suipht_token::suipht_token;
-*/
-
-// For Move coding conventions, see
-// https://docs.sui.io/concepts/sui-move-concepts/conventions
-
-
 module 0x1::suipht_token {
     use sui::tx_context::TxContext;
-    use sui::balance::Balance;
-    use sui::object::{ID, new as new_uid};
-    
+    use sui::object::{ID, UID, new as new_uid};
+    use sui::balance::{Balance, withdraw, deposit, zero};
+    use sui::coin::Coin;
+    use sui::transfer;
+    use sui::error::abort;
+    use sui::math::safe_add;
+
+    /// Admin struct to manage minting and liquidity pools
+    public struct TokenAdmin has key {
+        id: UID,
+        admin: address,
+    }
+
     /// Struct representing our custom token
     public struct SuiphtToken has key, store {
         id: UID,
         name: vector<u8>,
         symbol: vector<u8>,
         total_supply: u64,
-        balance: u64,
+        balance: Balance<SuiphtToken>,
     }
 
-    /// Initializes the token for a user
+    /// Struct representing a liquidity pool for the token
+    public struct LiquidityPool has key, store {
+        id: UID,
+        token_balance: Balance<SuiphtToken>,
+        sui_balance: Balance<SUI>,
+        owner: address,
+    }
+
+    /// Initializes token admin
+    public fun create_admin(admin: address, ctx: &mut TxContext): TokenAdmin {
+        TokenAdmin { id: new_uid(ctx), admin }
+    }
+
+    /// Initializes the token (only admin can call this)
     public fun create_token(
-        name: vector<u8>, 
-        symbol: vector<u8>, 
+        admin: &TokenAdmin,
+        name: vector<u8>,
+        symbol: vector<u8>,
         ctx: &mut TxContext
     ): SuiphtToken {
         SuiphtToken {
@@ -32,39 +47,82 @@ module 0x1::suipht_token {
             name,
             symbol,
             total_supply: 0,
-            balance: 0,
+            balance: zero(),
         }
     }
 
-    /// Mints new tokens
+    /// Mints new tokens (only admin can call this)
     public fun mint(
+        admin: &TokenAdmin,
         token: &mut SuiphtToken,
         amount: u64,
-        _ctx: &mut TxContext
+        ctx: &mut TxContext
     ) {
-        token.total_supply = token.total_supply + amount;
-        token.balance = token.balance + amount;
+        assert!(ctx.sender() == admin.admin, 1); // Only admin can mint
+        token.total_supply = safe_add(token.total_supply, amount);
+        deposit(&mut token.balance, amount);
     }
 
     /// Transfers tokens to another user
     public fun transfer(
-    sender: &mut SuiphtToken,
-    recipient: &mut SuiphtToken,
-    amount: u64
-) {
-    // Check that sender has enough balance; use error code 1 on failure.
-    assert!(sender.balance >= amount, 1);
-    sender.balance = sender.balance - amount;
-    recipient.balance = recipient.balance + amount;
+        token: &mut SuiphtToken,
+        recipient: address,
+        amount: u64,
+        ctx: &mut TxContext
+    ) {
+        assert!(withdraw(&mut token.balance, amount), 2);
+        let new_balance = Balance { value: amount };
+        transfer::transfer(new_balance, recipient);
     }
 
-    /// Adds liquidity (dummy function, implement based on your needs)
-    public fun add_liquidity( 
+    /// Creates a liquidity pool (only admin can call this)
+    public fun create_liquidity_pool(
+        admin: &TokenAdmin,
         token: &mut SuiphtToken,
-        amount: u64
+        initial_token_amount: u64,
+        initial_sui_amount: u64,
+        ctx: &mut TxContext
+    ): LiquidityPool {
+        assert!(ctx.sender() == admin.admin, 3);
+        assert!(withdraw(&mut token.balance, initial_token_amount), 4);
+        let sui_coins = Balance { value: initial_sui_amount };
+        LiquidityPool {
+            id: new_uid(ctx),
+            token_balance: Balance { value: initial_token_amount },
+            sui_balance: sui_coins,
+            owner: ctx.sender(),
+        }
+    }
+
+    /// Adds liquidity to the pool
+    public fun add_liquidity(
+        pool: &mut LiquidityPool,
+        token: &mut SuiphtToken,
+        token_amount: u64,
+        sui_amount: u64,
+        ctx: &mut TxContext
     ) {
-        assert!(token.balance >= amount, 2);
-        token.balance = token.balance - amount;
-        // implement liquidity pool integration logic here
+        assert!(withdraw(&mut token.balance, token_amount), 5);
+        deposit(&mut pool.token_balance, token_amount);
+        deposit(&mut pool.sui_balance, sui_amount);
+    }
+
+    /// Removes liquidity (only owner can remove liquidity)
+    public fun remove_liquidity(
+        pool: &mut LiquidityPool,
+        token_amount: u64,
+        sui_amount: u64,
+        recipient: address,
+        ctx: &mut TxContext
+    ) {
+        assert!(ctx.sender() == pool.owner, 6);
+        assert!(withdraw(&mut pool.token_balance, token_amount), 7);
+        assert!(withdraw(&mut pool.sui_balance, sui_amount), 8);
+
+        let tokens_to_transfer = Balance { value: token_amount };
+        let sui_to_transfer = Balance { value: sui_amount };
+
+        transfer::transfer(tokens_to_transfer, recipient);
+        transfer::transfer(sui_to_transfer, recipient);
     }
 }
