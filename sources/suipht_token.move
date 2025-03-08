@@ -12,11 +12,10 @@ module suipht_token::suipht_token;
 module 0x1::suipht_token {
     use sui::tx_context::TxContext;
     use sui::object::{ID, UID, new as new_uid};
-    use sui::balance::{Balance, withdraw, deposit, zero};
+    use sui::balance::{Balance, create, join, split, value, zero};
     use sui::coin::Coin;
     use sui::transfer;
-    use sui::error::abort;
-    use sui::math::safe_add;
+    use sui::error;
 
     /// Admin struct to manage minting and liquidity pools
     public struct TokenAdmin has key {
