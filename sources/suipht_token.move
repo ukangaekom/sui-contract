@@ -37,7 +37,7 @@ module 0x1::suipht_token {
     public struct LiquidityPool has key, store {
         id: UID,
         token_balance: Balance<SuiphtToken>,
-        sui_balance: Balance<SUI>,
+        sui_balance: Coin<SUI>,
         owner: address,
     }
 
@@ -70,8 +70,10 @@ module 0x1::suipht_token {
         ctx: &mut TxContext
     ) {
         assert!(ctx.sender() == admin.admin, 1); // Only admin can mint
-        token.total_supply = safe_add(token.total_supply, amount);
-        deposit(&mut token.balance, amount);
+        token.total_supply = token.total_supply + amount; // Increase total supply
+        
+        let new_tokens = balance::create(amount);
+        balance::join(&mut token.balance, new_tokens)
     }
 
     /// Transfers tokens to another user
@@ -81,9 +83,13 @@ module 0x1::suipht_token {
         amount: u64,
         ctx: &mut TxContext
     ) {
-        assert!(withdraw(&mut token.balance, amount), 2);
-        let new_balance = Balance { value: amount };
-        transfer::transfer(new_balance, recipient);
+        // Check that the sender has enough balance
+        assert!(balance::value(&token.balance) >= amount, 2); // Error code 2 for insufficient balance
+
+        // Split the tokens to transfer
+        let tokens_to_transfer = balance::split(&mut token.balance, amount);
+        // Transfer the tokens to the recipient
+        transfer::transfer(tokens_to_transfer, recipient);
     }
 
     /// Creates a liquidity pool (only admin can call this)
@@ -95,8 +101,13 @@ module 0x1::suipht_token {
         ctx: &mut TxContext
     ): LiquidityPool {
         assert!(ctx.sender() == admin.admin, 3);
-        assert!(withdraw(&mut token.balance, initial_token_amount), 4);
-        let sui_coins = Balance { value: initial_sui_amount };
+        // Check that the token balance is sufficient
+        assert!(balance::value(&token.balance) >= initial_token_amount, 4); // Error code 4 for insufficient balance
+        // Deduct tokens from the token balance
+        let tokens_for_pool = balance::split(&mut token.balance, initial_token_amount);
+
+        // Deduct SUI coins from the transaction context
+        let sui_coins = coin::take(ctx, initial_sui_amount);
         LiquidityPool {
             id: new_uid(ctx),
             token_balance: Balance { value: initial_token_amount },
@@ -105,35 +116,49 @@ module 0x1::suipht_token {
         }
     }
 
-    /// Adds liquidity to the pool
-    public fun add_liquidity(
-        pool: &mut LiquidityPool,
-        token: &mut SuiphtToken,
-        token_amount: u64,
-        sui_amount: u64,
-        ctx: &mut TxContext
-    ) {
-        assert!(withdraw(&mut token.balance, token_amount), 5);
-        deposit(&mut pool.token_balance, token_amount);
-        deposit(&mut pool.sui_balance, sui_amount);
-    }
+   /// Adds liquidity to the pool
+public fun add_liquidity(
+    pool: &mut LiquidityPool,
+    token: &mut SuiphtToken,
+    token_amount: u64,
+    sui_amount: u64,
+    ctx: &mut TxContext
+) {
+    // Check that the token balance is sufficient
+    assert!(balance::value(&token.balance) >= token_amount, 5); // Error code 5 for insufficient balance
+
+    // Deduct tokens from the token balance
+    let tokens_to_add = balance::split(&mut token.balance, token_amount);
+
+    // Deduct SUI coins from the transaction context
+    let sui_to_add = coin::take(ctx, sui_amount);
+
+    // Add tokens and SUI to the pool
+    balance::join(&mut pool.token_balance, tokens_to_add);
+    coin::join(&mut pool.sui_balance, sui_to_add);
+}
 
     /// Removes liquidity (only owner can remove liquidity)
-    public fun remove_liquidity(
-        pool: &mut LiquidityPool,
-        token_amount: u64,
-        sui_amount: u64,
-        recipient: address,
-        ctx: &mut TxContext
-    ) {
-        assert!(ctx.sender() == pool.owner, 6);
-        assert!(withdraw(&mut pool.token_balance, token_amount), 7);
-        assert!(withdraw(&mut pool.sui_balance, sui_amount), 8);
+public fun remove_liquidity(
+    pool: &mut LiquidityPool,
+    token_amount: u64,
+    sui_amount: u64,
+    recipient: address,
+    ctx: &mut TxContext
+) {
+    // Only the pool owner can remove liquidity
+    assert!(ctx.sender() == pool.owner, 6); // Error code 6 for unauthorized access
 
-        let tokens_to_transfer = Balance { value: token_amount };
-        let sui_to_transfer = Balance { value: sui_amount };
+    // Check that the pool has sufficient tokens and SUI
+    assert!(balance::value(&pool.token_balance) >= token_amount, 7); // Error code 7 for insufficient tokens
+    assert!(coin::value(&pool.sui_balance) >= sui_amount, 8); // Error code 8 for insufficient SUI
 
-        transfer::transfer(tokens_to_transfer, recipient);
-        transfer::transfer(sui_to_transfer, recipient);
-    }
+    // Deduct tokens and SUI from the pool
+    let tokens_to_transfer = balance::split(&mut pool.token_balance, token_amount);
+    let sui_to_transfer = coin::split(&mut pool.sui_balance, sui_amount);
+
+    // Transfer tokens and SUI to the recipient
+    transfer::transfer(tokens_to_transfer, recipient);
+    transfer::transfer(sui_to_transfer, recipient);
+}
 }
